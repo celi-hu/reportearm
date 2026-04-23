@@ -1,0 +1,504 @@
+import math
+import requests
+import pandas as pd
+import numpy as np
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
+
+from aux_functions import *
+
+# ================= CONFIG =================
+BASE = "https://api-prod.humand.co/public/api/v1"
+AUTH = "Basic NDY4NzQwMzpseHhBWGNzdGJDVERRWEpHTFg0SU41MzJfTVpNRENSdg=="
+
+
+START_DATE = "2026-03-19"
+END_DATE   = "2026-04-12"
+
+
+LIMIT_USERS = 50
+LIMIT_DAYS  = 500
+BATCH_SIZE  = 25
+MAX_WORKERS = 8
+
+TZ_AR = ZoneInfo("America/Argentina/Buenos_Aires")
+NORMALIZAR_A_MINUTO = False
+
+TOLERANCIA_TARDANZA_SEG = 0
+
+FLAG_COLS = ["Ausencia", "Tardanza -", "Trabajo Insuficiente", "Es Feriado", "Licencia"]
+
+CATEGORIAS = [
+    "REGULAR",
+    "NOCTURNA",
+    "EXTRA",
+    "EXTRA SABADO",
+    "EXTRA AL 50",
+    "EXTRA AL 100",
+    "EXTRA DOMINGO",
+    "FRANCO",
+    "FERIADO",
+    "FERIADO NOCTURNA",
+    "FRANCO NOCTURNA",
+    "NOCTURNA 2",
+]
+
+# Columnas “horas” que vamos a “vaciar” en el día anterior cuando movemos
+HORAS_A_VACIAR_DIA_ANTERIOR = [
+    "Horas Trabajadas",
+    "HORAS_REGULAR",
+    "HORAS_EXTRA",
+    "HORAS_EXTRA AL 50",
+    "HORAS_EXTRA AL 100",
+    "HORAS_NOCTURNA",
+    "HORAS_FRANCO",
+    "HORAS_FERIADO",
+    "HORAS_FERIADO NOCTURNA",
+    "HORAS_FRANCO NOCTURNA",
+    "HORAS_NOCTURNA 2",
+    "HORAS_EXTRA SABADO",
+    "HORAS_EXTRA DOMINGO",
+]
+
+# ================= SESSION =================
+s = requests.Session()
+s.headers.update({"Authorization": AUTH})
+
+def get(url, params):
+    r = s.get(url, params=params, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+# ================= USERS =================
+def fetch_users():
+    #first = get(f"{BASE}/users", {"page": 1, "limit": LIMIT_USERS, "search": "33932705"}) #challapa
+    first = get(f"{BASE}/users", {"page": 1, "limit": LIMIT_USERS})
+    pages = math.ceil(first["count"] / LIMIT_USERS)
+
+    users = first["users"]
+    for p in range(2, pages + 1):
+        users += get(f"{BASE}/users", {"page": p, "limit": LIMIT_USERS})["users"]
+
+    user_map, turno_map, employee_ids = {}, {}, []
+
+    for u in users:
+        if u.get("status") != "ACTIVE":
+            continue
+
+        emp = u.get("employeeInternalId")
+        if not emp:
+            continue
+
+        employee_ids.append(emp)
+        user_map[emp] = f"{u.get('lastName','')}, {u.get('firstName','')}"
+
+        turno = ""
+        for seg in (u.get("segmentations") or []):
+            if (seg.get("group") or "").strip() == "Turno":
+                turno = seg.get("item") or ""
+                break
+        turno_map[emp] = turno
+
+    return employee_ids, user_map, turno_map
+
+
+# ================= DAY SUMMARIES =================
+def fetch_batch(emp_ids, user_map, turno_map):
+    rows = []
+    page = 1
+
+    while True:
+        data = get(
+            f"{BASE}/time-tracking/day-summaries",
+            {
+                "employeeIds": ",".join(emp_ids),
+                "startDate": START_DATE,
+                "endDate": END_DATE,
+                "limit": LIMIT_DAYS,
+                "page": page,
+            },
+        )
+
+        items = data.get("items", [])
+        if not items:
+            break
+
+        for it in items:
+            emp = it.get("employeeId")
+            ref = (it.get("referenceDate") or it.get("date") or "")[:10]
+            if not ref:
+                continue
+
+            entries = it.get("entries") or []
+            slots   = it.get("timeSlots") or []
+            incid   = it.get("incidences") or []
+            tor     = it.get("timeOffRequests") or []
+            hol     = it.get("holidays") or []
+            cat     = it.get("categorizedHours") or []
+
+            flags = flags_incidencias_y_eventos(
+                incidences=incid,
+                time_off_requests=tor,
+                holidays=hol
+            )
+            hours_obj = it.get("hours") or {}
+            scheduled = float(hours_obj.get("scheduled") or 0)
+            worked_api = float(hours_obj.get("worked") or 0)
+
+            # Horario obligatorio
+            sched_start = sched_end = pd.NaT
+            if slots and isinstance(slots, list):
+                d = datetime.strptime(ref, "%Y-%m-%d")
+                s0 = slots[0] if slots else {}
+                if isinstance(s0, dict):
+                    if s0.get("startTime"):
+                        try:
+                            h, m = map(int, s0["startTime"].split(":"))
+                            sched_start = datetime(d.year, d.month, d.day, h, m, tzinfo=TZ_AR)
+                        except Exception:
+                            sched_start = pd.NaT
+                    if s0.get("endTime"):
+                        try:
+                            h, m = map(int, s0["endTime"].split(":"))
+                            sched_end = datetime(d.year, d.month, d.day, h, m, tzinfo=TZ_AR)
+                            if not pd.isna(sched_start) and sched_end < sched_start:
+                                sched_end += timedelta(days=1)
+                        except Exception:
+                            sched_end = pd.NaT
+
+            # Fichadas
+            real_start = real_end = pd.NaT
+            if entries and isinstance(entries, list):
+                entries_sorted = sorted(
+                    [e for e in entries if isinstance(e, dict) and (e.get("time") or e.get("date"))],
+                    key=lambda e: iso_to_dt(e.get("time") or e.get("date"), TZ_AR)
+                )
+
+                starts_dt = [
+                    iso_to_dt(e.get("time") or e.get("date"), TZ_AR)
+                    for e in entries_sorted
+                    if (e.get("type") or "").upper().strip() == "START"
+                ]
+                ends_dt = [
+                    iso_to_dt(e.get("time") or e.get("date"), TZ_AR)
+                    for e in entries_sorted
+                    if (e.get("type") or "").upper().strip() == "END"
+                ]
+                if starts_dt:
+                    real_start = min(starts_dt)
+                if ends_dt:
+                    real_end = max(ends_dt)
+
+            if NORMALIZAR_A_MINUTO:
+                sched_start = floor_minute(sched_start)
+                sched_end   = floor_minute(sched_end)
+                real_start  = floor_minute(real_start)
+                real_end    = floor_minute(real_end)
+
+            cat_hours = split_categorized_hours_basic(cat, CATEGORIAS)
+
+            row = {
+                "ID": emp,
+                "APELLIDO, NOMBRE": user_map.get(emp, ""),
+                "FECHA": ref,
+                "DIA": weekday_es(ref),
+                "Turno": turno_map.get(emp, ""),
+
+                "Ausencia": flags["Ausencia"],
+                "Tardanza -": flags["Tardanza"],
+                "Trabajo Insuficiente": flags["Trabajo Insuficiente"],
+                "Es Feriado": flags["Es Feriado"],
+                "Licencia": flags["Licencia"],
+
+                "_ss": sched_start,
+                "_se": sched_end,
+                "_rs": real_start,
+                "_re": real_end,
+
+                "Cruce de día": calcular_cruce_dia(real_start, real_end),
+
+                "HORARIO_OBLIGATORIO": fmt_range(sched_start, sched_end),
+                "FICHADAS": fmt_range(real_start, real_end),
+                "OBSERVACIONES": build_observaciones(it),
+                "PLANIFICADAS": scheduled,
+                "_worked_api": worked_api,
+                "_isWorkday_api": it.get("isWorkday")
+            }
+
+            row.update(cat_hours)
+            rows.append(row)
+
+        if len(items) < LIMIT_DAYS:
+            break
+        page += 1
+
+    return rows
+
+def build_df(employee_ids, user_map, turno_map):
+    rows = []
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+        futures = [
+            ex.submit(fetch_batch, employee_ids[i:i + BATCH_SIZE], user_map, turno_map)
+            for i in range(0, len(employee_ids), BATCH_SIZE)
+        ]
+        for f in as_completed(futures):
+            rows.extend(f.result())
+
+    df = pd.DataFrame(rows)
+
+    for cat in CATEGORIAS:
+        col = f"HORAS_{cat}"
+        if col not in df.columns:
+            df[col] = 0.0
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+
+    # Métrica base (la usás para mostrar, pero OJO: no la usamos para mover)
+
+    return df
+
+
+# ================= MAIN =================
+def main():
+    employee_ids, user_map, turno_map = fetch_users()
+    print(f"Usuarios ACTIVE: {len(employee_ids)}")
+
+    df = build_df(employee_ids, user_map, turno_map)
+    df = df.sort_values(by=["ID", "FECHA"], ascending=[True, True]).reset_index(drop=True)
+
+    df_export = df.copy()
+
+
+    df_export["TARDANZA"] = df_export.apply(
+        lambda r: round(max(0.0, calc_delta_hours(r["_rs"], r["_ss"], TOLERANCIA_TARDANZA_SEG)), 2),
+        axis=1
+    )
+
+    df_export["LLEGADA_ANTICIPADA"] = df_export.apply(
+        lambda r: round(max(0.0, calc_early_arrival_hours(r["_rs"], r["_ss"])), 2),
+        axis=1
+    )
+
+    rename_excel = {
+        "ID": "ID",
+        "APELLIDO, NOMBRE": "Apellido, Nombre",
+        "FECHA": "Fecha",
+        "DIA": "dia",
+        "PLANIFICADAS": "Horas planificadas",
+        "HORARIO_OBLIGATORIO": "Horario obligatorio",
+        "FICHADAS": "Fichadas",
+        "OBSERVACIONES": "Observaciones",
+        "HORAS_TRABAJADAS": "Horas Trabajadas",
+    }
+
+    df_export = df_export.rename(columns=rename_excel)
+
+    # Fix 1/4: corrige Horas Trabajadas cuando la API sobre/sub-reporta vs fichadas reales
+    df_export = corregir_horas_trabajadas(df_export)
+
+    # Fix 3/5: infiere extras faltantes cuando la API no los categorizó
+    df_export = inferir_extras_faltantes(df_export)
+
+    # ahora sí, dropeo internos
+    df_export["Horas_Netas"] = (
+        df_export["HORAS_EXTRA"] - df_export["LLEGADA_ANTICIPADA"]
+    ).round(2)
+
+    df_export = restar_llegada_anticipada(df_export)
+    # 🔵 Si tiene HORAS_FERIADO, forzar extras a cero
+    #df_export = forzar_extras_a_cero_si_feriado(df_export)
+    # ✅ aplicar ajuste ANTES de dropear _rs/_re (los necesitamos para _worked)
+    df_export = aplicar_ajuste_cruce_a_feriado(df_export)
+    #df_export = limpiar_extra_100_turno_noche(df_export)
+    #df_export = forzar_extras_a_cero_si_feriado_o_franco(df_export)
+
+
+
+
+
+    df_export = aplicar_prioridades_horas_extra(df_export)
+
+    df_export = df_export.drop(columns=["_ss","_se","_rs","_re","_worked","_worked_api","_isWorkday_api","_regla_a_aplicada"],errors="ignore")
+
+    cols_final = [
+        "ID",
+        "Apellido, Nombre",
+        "Fecha",
+        "dia", 
+        "Turno",
+        #"Ausencia",
+        #"Tardanza -", 
+        "TARDANZA", 
+        # "Trabajo Insuficiente",
+        # "Es Feriado",
+        # "Licencia",
+        #"Cruce de día",
+        # "Ajuste cruce→feriado",
+        "Observaciones",
+        "Horas_Netas",
+        #"HORAS_EXTRA",
+        "LLEGADA_ANTICIPADA",
+
+        "Horario obligatorio",
+        "Fichadas", 
+        "Horas planificadas",
+        "Horas Trabajadas",
+        "HORAS_FRANCO",
+        "HORAS_FERIADO",
+        #"HORAS_FERIADO NOCTURNA",
+        # "HORAS_FRANCO NOCTURNA",
+
+        #"HORAS_REGULAR",
+    "HORAS_EXTRA AL 50","HORAS_EXTRA AL 100"#"HORAS_NOCTURNA",
+    ]
+
+    for c in cols_final:
+        if c not in df_export.columns:
+            df_export[c] = np.nan
+
+    df_export = df_export[cols_final]
+    df_export["Turno"] = df_export["Turno"].fillna("")
+    now = datetime.now()
+    out = now.strftime("%Y-%m-%d_%H-%M-%S") + "_reporte_basico.xlsx"
+    generated_at = now.strftime("%Y-%m-%d %H:%M")
+
+    COLS_CERO_VACIO = [
+        "HORAS_FRANCO",
+        "HORAS_FERIADO", 
+        "HORAS_FERIADO NOCTURNA",
+        "HORAS_FRANCO NOCTURNA",
+        "HORAS_NOCTURNA 2",
+        "Extra Sábado",
+        "Extra Domingo",
+        "Horas planificadas",
+        "Horas Trabajadas",
+        "HORAS_REGULAR",
+        "HORAS_EXTRA",
+        "HORAS_EXTRA AL 50",
+        "HORAS_EXTRA AL 100",
+        "HORAS_NOCTURNA",
+        "TARDANZA",
+        "LLEGADA_ANTICIPADA",
+        "HORAS_EXTRA DOMINGO"
+    ]
+
+    for c in COLS_CERO_VACIO:
+        if c in df_export.columns:
+            df_export[c] = df_export[c].where(df_export[c] != 0, np.nan)
+
+    df_export["Fecha"] = pd.to_datetime(df_export["Fecha"], errors="coerce").dt.strftime("%Y-%m-%d")
+
+    export_detalle_diario_excel(
+        df_export=df_export,
+        out=out,
+        START_DATE=START_DATE,
+        END_DATE=END_DATE,
+        generated_at=generated_at,
+        EXPORTAR_DECIMAL=True,
+        COLS_HORAS_DETALLE=[c for c in HORAS_A_VACIAR_DIA_ANTERIOR if c in df_export.columns],
+    )
+
+    #agregar_resumen_turnos(out)
+    agregar_resumen_general(out)
+
+    print("Excel generado:", out)
+def run_report(start_date: str, end_date: str) -> bytes:
+    import tempfile, os
+    global START_DATE, END_DATE
+    START_DATE = start_date
+    END_DATE   = end_date
+
+    employee_ids, user_map, turno_map = fetch_users()
+    df = build_df(employee_ids, user_map, turno_map)
+    df = df.sort_values(by=["ID", "FECHA"], ascending=[True, True]).reset_index(drop=True)
+
+    df_export = df.copy()
+
+    df_export["TARDANZA"] = df_export.apply(
+        lambda r: round(max(0.0, calc_delta_hours(r["_rs"], r["_ss"], TOLERANCIA_TARDANZA_SEG)), 2),
+        axis=1
+    )
+    df_export["LLEGADA_ANTICIPADA"] = df_export.apply(
+        lambda r: round(max(0.0, calc_early_arrival_hours(r["_rs"], r["_ss"])), 2),
+        axis=1
+    )
+
+    rename_excel = {
+        "ID": "ID",
+        "APELLIDO, NOMBRE": "Apellido, Nombre",
+        "FECHA": "Fecha",
+        "DIA": "dia",
+        "PLANIFICADAS": "Horas planificadas",
+        "HORARIO_OBLIGATORIO": "Horario obligatorio",
+        "FICHADAS": "Fichadas",
+        "OBSERVACIONES": "Observaciones",
+        "HORAS_TRABAJADAS": "Horas Trabajadas",
+    }
+    df_export = df_export.rename(columns=rename_excel)
+
+    df_export = corregir_horas_trabajadas(df_export)
+    df_export = inferir_extras_faltantes(df_export)
+
+    df_export["Horas_Netas"] = (df_export["HORAS_EXTRA"] - df_export["LLEGADA_ANTICIPADA"]).round(2)
+    df_export = restar_llegada_anticipada(df_export)
+    df_export = aplicar_ajuste_cruce_a_feriado(df_export)
+    df_export = aplicar_prioridades_horas_extra(df_export)
+    df_export = df_export.drop(
+        columns=["_ss","_se","_rs","_re","_worked","_worked_api","_isWorkday_api","_regla_a_aplicada"],
+        errors="ignore"
+    )
+
+    cols_final = [
+        "ID", "Apellido, Nombre", "Fecha", "dia", "Turno",
+        "TARDANZA", "Observaciones", "Horas_Netas", "LLEGADA_ANTICIPADA",
+        "Horario obligatorio", "Fichadas", "Horas planificadas", "Horas Trabajadas",
+        "HORAS_FRANCO", "HORAS_FERIADO",
+        "HORAS_EXTRA AL 50", "HORAS_EXTRA AL 100",
+    ]
+    for c in cols_final:
+        if c not in df_export.columns:
+            df_export[c] = np.nan
+    df_export = df_export[cols_final]
+    df_export["Turno"] = df_export["Turno"].fillna("")
+
+    COLS_CERO_VACIO = [
+        "HORAS_FRANCO", "HORAS_FERIADO", "HORAS_FERIADO NOCTURNA", "HORAS_FRANCO NOCTURNA",
+        "HORAS_NOCTURNA 2", "Extra Sábado", "Extra Domingo", "Horas planificadas",
+        "Horas Trabajadas", "HORAS_REGULAR", "HORAS_EXTRA", "HORAS_EXTRA AL 50",
+        "HORAS_EXTRA AL 100", "HORAS_NOCTURNA", "TARDANZA", "LLEGADA_ANTICIPADA", "HORAS_EXTRA DOMINGO",
+    ]
+    for c in COLS_CERO_VACIO:
+        if c in df_export.columns:
+            df_export[c] = df_export[c].where(df_export[c] != 0, np.nan)
+
+    df_export["Fecha"] = pd.to_datetime(df_export["Fecha"], errors="coerce").dt.strftime("%Y-%m-%d")
+
+    now = datetime.now()
+    generated_at = now.strftime("%Y-%m-%d %H:%M")
+
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+        out = tmp.name
+
+    try:
+        export_detalle_diario_excel(
+            df_export=df_export,
+            out=out,
+            START_DATE=START_DATE,
+            END_DATE=END_DATE,
+            generated_at=generated_at,
+            EXPORTAR_DECIMAL=True,
+            COLS_HORAS_DETALLE=[c for c in HORAS_A_VACIAR_DIA_ANTERIOR if c in df_export.columns],
+        )
+        agregar_resumen_general(out)
+
+        with open(out, "rb") as f:
+            return f.read()
+    finally:
+        os.unlink(out)
+
+
+if __name__ == "__main__":
+    main()
