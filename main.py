@@ -12,8 +12,9 @@ from openpyxl.styles import PatternFill
 from aux_functions import *
 
 # ================= CONFIG =================
+import streamlit as st
 BASE = "https://api-prod.humand.co/public/api/v1"
-AUTH = "Basic NDY4NzQwMzpseHhBWGNzdGJDVERRWEpHTFg0SU41MzJfTVpNRENSdg=="
+AUTH = st.secrets["AUTH"]
 
 
 START_DATE = "2026-03-19"
