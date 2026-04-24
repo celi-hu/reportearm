@@ -48,7 +48,7 @@ CATEGORIAS = [
     "NOCTURNA 2",
 ]
 
-# Columnas “horas” que vamos a “vaciar” en el día anterior cuando movemos
+# Columnas "horas" que vamos a "vaciar" en el día anterior cuando movemos
 HORAS_A_VACIAR_DIA_ANTERIOR = [
     "Horas Trabajadas",
     "HORAS_REGULAR",
@@ -317,9 +317,6 @@ def main():
     #df_export = forzar_extras_a_cero_si_feriado_o_franco(df_export)
 
 
-
-
-
     df_export = aplicar_prioridades_horas_extra(df_export)
 
     df_export = df_export.drop(columns=["_ss","_se","_rs","_re","_worked","_worked_api","_isWorkday_api","_regla_a_aplicada"],errors="ignore")
@@ -328,11 +325,11 @@ def main():
         "ID",
         "Apellido, Nombre",
         "Fecha",
-        "dia", 
+        "dia",
         "Turno",
         #"Ausencia",
-        #"Tardanza -", 
-        "TARDANZA", 
+        #"Tardanza -",
+        "TARDANZA",
         # "Trabajo Insuficiente",
         # "Es Feriado",
         # "Licencia",
@@ -344,7 +341,7 @@ def main():
         "LLEGADA_ANTICIPADA",
 
         "Horario obligatorio",
-        "Fichadas", 
+        "Fichadas",
         "Horas planificadas",
         "Horas Trabajadas",
         "HORAS_FRANCO",
@@ -368,7 +365,7 @@ def main():
 
     COLS_CERO_VACIO = [
         "HORAS_FRANCO",
-        "HORAS_FERIADO", 
+        "HORAS_FERIADO",
         "HORAS_FERIADO NOCTURNA",
         "HORAS_FRANCO NOCTURNA",
         "HORAS_NOCTURNA 2",
@@ -406,6 +403,8 @@ def main():
     agregar_resumen_general(out)
 
     print("Excel generado:", out)
+
+
 def run_report(start_date: str, end_date: str) -> bytes:
     import tempfile, os
     global START_DATE, END_DATE

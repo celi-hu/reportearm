@@ -778,13 +778,13 @@ def aplicar_ajuste_cruce_a_feriado(df_export: pd.DataFrame) -> pd.DataFrame:
 
             # ── REGLA B: FERIADO → FERIADO ──
             elif cur_es_feriado and nxt_es_feriado and i_cur not in procesados:
-                df.at[i_cur, "HORAS_FERIADO"] = round(cur_feriado + nxt_worked, 2)
-                df.at[i_nxt, "HORAS_FERIADO"] = 0.0
+                df.at[i_cur, "HORAS_FERIADO"] = round(cur_worked, 2)
+                # el día siguiente no se toca, sus horas quedan para Regla C
                 procesados.add(i_cur)
 
                 obs_nxt = str(df.at[i_nxt, "Observaciones"] or "").strip()
                 df.at[i_nxt, "Observaciones"] = (
-                    obs_nxt + f" | Regla B: horas consolidadas en {row_cur['Fecha'].date()}"
+                        obs_nxt + f" | Regla B: horas feriado asignadas en {row_cur['Fecha'].date()}"
                 ).strip(" |")
 
 
@@ -814,7 +814,6 @@ def aplicar_ajuste_cruce_a_feriado(df_export: pd.DataFrame) -> pd.DataFrame:
                         # Feriado no coincide con franco → solo Horas Trabajadas en inicio
                         # → día siguiente se limpia
                         df.at[i_cur, "Horas Trabajadas"] = cur_w
-                        df.at[i_nxt, "Horas Trabajadas"] = 0.0
                         df.at[i_nxt, "HORAS_EXTRA AL 100"] = 0.0
                         df.at[i_nxt, "HORAS_EXTRA AL 50"] = 0.0
                         df.at[i_nxt, "HORAS_FRANCO"] = 0.0
