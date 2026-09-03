@@ -10,11 +10,9 @@ import pandas as pd
 import re
 from openpyxl import load_workbook
 
-
 import numpy as np
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.styles import Font, Alignment, PatternFill
-
 
 TZ_AR = ZoneInfo("America/Argentina/Buenos_Aires")
 
@@ -55,6 +53,7 @@ WEEKDAY_ES_MAP = {
     6: "Domingo",
 }
 
+
 # =========================
 # FECHAS / HORAS
 # =========================
@@ -93,6 +92,7 @@ def calc_delta_hours(real, sched, tolerance_seconds=0):
         return 0.0
     delta = (real - sched).total_seconds() - tolerance_seconds
     return round(delta / 3600, 2) if delta > 0 else 0.0
+
 
 def calc_early_arrival_hours(real, sched):
     if pd.isna(real) or pd.isna(sched):
@@ -287,24 +287,23 @@ def horas_para_excel(value, usar_decimal=True):
     return v / 24.0
 
 
-
 def export_detalle_diario_excel(
-    df_export: pd.DataFrame,
-    out: str,
-    START_DATE: str,
-    END_DATE: str,
-    generated_at: str,
-    EXPORTAR_DECIMAL: bool,
-    COLS_HORAS_DETALLE: list,
+        df_export: pd.DataFrame,
+        out,
+        START_DATE: str,
+        END_DATE: str,
+        generated_at: str,
+        EXPORTAR_DECIMAL: bool,
+        COLS_HORAS_DETALLE: list,
 ):
     with pd.ExcelWriter(out, engine="xlsxwriter") as writer:
         workbook = writer.book
 
         fmt_title = workbook.add_format({"bold": True, "font_size": 14})
-        fmt_sub   = workbook.add_format({"font_size": 11})
-        fmt_wrap  = workbook.add_format({"text_wrap": True})
-        fmt_hhmm  = workbook.add_format({"num_format": "[h]:mm"}) if not EXPORTAR_DECIMAL else None
-        fmt_dec   = workbook.add_format({"num_format": "0.00"})   if EXPORTAR_DECIMAL else None
+        fmt_sub = workbook.add_format({"font_size": 11})
+        fmt_wrap = workbook.add_format({"text_wrap": True})
+        fmt_hhmm = workbook.add_format({"num_format": "[h]:mm"}) if not EXPORTAR_DECIMAL else None
+        fmt_dec = workbook.add_format({"num_format": "0.00"}) if EXPORTAR_DECIMAL else None
 
         # ----- Detalle diario -----
         startrow = 4
@@ -330,7 +329,7 @@ def export_detalle_diario_excel(
             else:
                 ws1.set_column(idx, idx, 26)
 
-    print("✅ Excel generado:", out)
+    print("✅ Excel generado:", out if isinstance(out, str) else "(buffer)")
 
 
 def aplicar_regla_extra_50(horas_extra):
@@ -365,13 +364,12 @@ def decimal_to_hhmm(x):
     return f"{h:02d}:{m:02d}"
 
 
-
 def flags_incidencias_y_eventos(
-    entries=None,
-    slots=None,
-    incidences=None,
-    time_off_requests=None,
-    holidays=None
+        entries=None,
+        slots=None,
+        incidences=None,
+        time_off_requests=None,
+        holidays=None
 ) -> dict:
     """
     Devuelve flags 'Si' / 'No' para columnas:
@@ -409,10 +407,11 @@ def flags_incidencias_y_eventos(
         "Licencia": "Si" if bool(time_off_requests) else "No",
     }
 
+
 def pintar_flags_si_no(
-    path_xlsx: str,
-    sheet_name: str = "Detalle diario",
-    cols_flag=None,
+        path_xlsx: str,
+        sheet_name: str = "Detalle diario",
+        cols_flag=None,
 ):
     if cols_flag is None:
         cols_flag = [
@@ -457,7 +456,7 @@ def pintar_flags_si_no(
 
     # Colores (claros)
     fill_green = PatternFill("solid", fgColor="C6EFCE")  # verde claro
-    fill_red   = PatternFill("solid", fgColor="FFC7CE")  # rojo claro
+    fill_red = PatternFill("solid", fgColor="FFC7CE")  # rojo claro
 
     def norm(v):
         if v is None:
@@ -486,8 +485,6 @@ def redondear_extra_media_hora(x):
     return math.floor(v / 0.5) * 0.5
 
 
-
-
 COLS_SUM = [
     "Horas Trabajadas",
     "HORAS_FRANCO",
@@ -497,16 +494,20 @@ COLS_SUM = [
     "TARDANZA",
 ]
 
-def _read_detalle_diario_from_export(path_xlsx: str) -> pd.DataFrame:
+
+def _read_detalle_diario_from_export(path_xlsx) -> pd.DataFrame:
     """
     Tu 'Detalle diario' tiene 3 filas arriba (Período/Generado/vacío) y luego el header real.
     Esto lo lee robusto y devuelve el DataFrame con columnas correctas.
     """
+    if hasattr(path_xlsx, "seek"):
+        path_xlsx.seek(0)
     raw = pd.read_excel(path_xlsx, sheet_name="Detalle diario", skiprows=3)
     cols = raw.iloc[0].tolist()
     df = raw.iloc[1:].reset_index(drop=True)
     df.columns = cols
     return df
+
 
 def _build_resumen(df_det: pd.DataFrame, turno_key: str) -> pd.DataFrame:
     df = df_det.copy()
@@ -526,8 +527,8 @@ def _build_resumen(df_det: pd.DataFrame, turno_key: str) -> pd.DataFrame:
 
     res = (
         dft.groupby("ID", as_index=False)
-           .agg({**{"Apellido, Nombre": "first", "Turno": "first"},
-                 **{c: "sum" for c in COLS_SUM}})
+        .agg({**{"Apellido, Nombre": "first", "Turno": "first"},
+              **{c: "sum" for c in COLS_SUM}})
     )
 
     res = res[["ID", "Apellido, Nombre", "Turno"] + COLS_SUM]
@@ -535,6 +536,7 @@ def _build_resumen(df_det: pd.DataFrame, turno_key: str) -> pd.DataFrame:
         res[c] = res[c].round(2)
 
     return res.sort_values(["Apellido, Nombre", "ID"], kind="mergesort").reset_index(drop=True)
+
 
 def _write_df_to_sheet(wb, sheet_name: str, df_out: pd.DataFrame):
     if sheet_name in wb.sheetnames:
@@ -570,15 +572,20 @@ def _write_df_to_sheet(wb, sheet_name: str, df_out: pd.DataFrame):
             for r in range(2, ws.max_row + 1):
                 ws.cell(r, col_idx).number_format = "0.00"
 
-def agregar_resumen_turnos(path_xlsx: str):
+
+def agregar_resumen_turnos(path_xlsx):
     df_det = _read_detalle_diario_from_export(path_xlsx)
 
-    resumen_tarde  = _build_resumen(df_det, "tarde")
+    resumen_tarde = _build_resumen(df_det, "tarde")
     resumen_manana = _build_resumen(df_det, "mañana")
 
+    if hasattr(path_xlsx, "seek"):
+        path_xlsx.seek(0)
     wb = load_workbook(path_xlsx)
     _write_df_to_sheet(wb, "Resumen Tarde", resumen_tarde)
     _write_df_to_sheet(wb, "Resumen Mañana", resumen_manana)
+    if hasattr(path_xlsx, "seek"):
+        path_xlsx.seek(0)
     wb.save(path_xlsx)
     wb.close()
 
@@ -592,7 +599,57 @@ def worked_hours_from_entries(rs, re) -> float:
         return round(max(0.0, delta), 2)
     except Exception:
         return 0.0
-    
+
+
+def limpiar_extras_por_umbral(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Limpia extras que no cumplen los umbrales mínimos:
+    - Llegada anticipada: solo cuenta si >= 50 minutos (0.833h)
+    - Salida tardía: solo cuenta si >= 30 minutos (0.5h)
+    Si no se cumple ninguno de los dos, las extras se limpian.
+    No aplica en feriado ni franco.
+    """
+    out = df.copy()
+    eps = 1e-9
+
+    def num(col):
+        if col not in out.columns:
+            return pd.Series(0.0, index=out.index)
+        return pd.to_numeric(out[col], errors="coerce").fillna(0.0)
+
+    worked  = num("Horas Trabajadas")
+    planif  = num("Horas planificadas")
+    llegada = num("LLEGADA_ANTICIPADA")
+    feriado = num("HORAS_FERIADO")
+    franco  = num("HORAS_FRANCO")
+
+    UMBRAL_LLEGADA = 0.833  # 50 minutos
+    UMBRAL_SALIDA  = 0.5    # 30 minutos
+
+    es_feriado_o_franco = (feriado > eps) | (franco > eps)
+
+    # Horas reales después del fin del turno usando _re y _se
+    if "_se" in out.columns and "_re" in out.columns:
+        mask_validos = (~pd.isna(out["_se"])) & (~pd.isna(out["_re"]))
+        exceso = pd.Series(0.0, index=out.index)
+        exceso[mask_validos] = out.loc[mask_validos].apply(
+            lambda r: max(0.0, round((r["_re"] - r["_se"]).total_seconds() / 3600.0, 2)),
+            axis=1
+        )
+    else:
+        exceso = (worked - planif).clip(lower=0.0)
+
+    no_cumple = (
+        (~es_feriado_o_franco) &
+        (llegada < UMBRAL_LLEGADA) &
+        (exceso < UMBRAL_SALIDA)
+    )
+
+    out.loc[no_cumple, "HORAS_EXTRA AL 50"]  = 0.0
+    out.loc[no_cumple, "HORAS_EXTRA AL 100"] = 0.0
+    out.loc[no_cumple, "HORAS_EXTRA"]        = 0.0
+
+    return out
 
 
 def restar_llegada_anticipada(df: pd.DataFrame) -> pd.DataFrame:
@@ -605,28 +662,32 @@ def restar_llegada_anticipada(df: pd.DataFrame) -> pd.DataFrame:
         return pd.to_numeric(out[col], errors="coerce").fillna(default).astype(float)
 
     llegada = num("LLEGADA_ANTICIPADA")
-    worked  = num("Horas Trabajadas")
-    planif  = num("Horas planificadas")
+    worked = num("Horas Trabajadas")
+    planif = num("Horas planificadas")
     feriado = num("HORAS_FERIADO")
-    franco  = num("HORAS_FRANCO")
-    ex50    = num("HORAS_EXTRA AL 50")
-    ex100   = num("HORAS_EXTRA AL 100")
+    franco = num("HORAS_FRANCO")
+    ex50 = num("HORAS_EXTRA AL 50")
+    ex100 = num("HORAS_EXTRA AL 100")
     extra_t = num("HORAS_EXTRA")
 
-    is_franco  = franco > eps
+    is_franco = franco > eps
     is_feriado = (~is_franco) & (feriado > eps)
-    is_normal  = (~is_franco) & (~is_feriado)
+    is_normal = (~is_franco) & (~is_feriado)
+
+    # Excluir filas donde aplica la regla de llegada anticipada >= 50min
+    nueva_regla = (llegada >= 0.833) & (~is_feriado) & (~is_franco)
+    is_normal = is_normal & (~nueva_regla)
 
     # ── FRANCO: no se toca nada ──
     feriado_new = feriado.copy()
-    worked_new  = worked.copy()
-    ex50_new    = ex50.copy()
-    ex100_new   = ex100.copy()
-    extra_new   = extra_t.copy()
+    worked_new = worked.copy()
+    ex50_new = ex50.copy()
+    ex100_new = ex100.copy()
+    extra_new = extra_t.copy()
 
     # ── FERIADO: restar llegada de feriado y trabajadas ──
-    #feriado_new = np.where(is_feriado, np.maximum(feriado - llegada, 0.0), feriado_new)
-    #worked_new  = np.where(is_feriado, np.maximum(worked  - llegada, 0.0), worked_new)
+    # feriado_new = np.where(is_feriado, np.maximum(feriado - llegada, 0.0), feriado_new)
+    # worked_new  = np.where(is_feriado, np.maximum(worked  - llegada, 0.0), worked_new)
     pass
 
     # ── NORMAL ──
@@ -635,31 +696,32 @@ def restar_llegada_anticipada(df: pd.DataFrame) -> pd.DataFrame:
     # Netas < 0: llegada anticipada > extra → extra a 0, se descuenta de trabajadas
     mask_neg = is_normal & (horas_netas < -eps) & (worked > eps)
 
-    ex50_new  = np.where(mask_neg, 0.0, ex50_new)
+    ex50_new = np.where(mask_neg, 0.0, ex50_new)
     ex100_new = np.where(mask_neg, 0.0, ex100_new)
     extra_new = np.where(mask_neg, 0.0, extra_new)
-    worked_new = np.where(mask_neg, np.maximum(planif + horas_netas, 0.0), worked_new)
+    worked_new = np.where(mask_neg, np.minimum(worked_new, np.maximum(planif + horas_netas, 0.0)), worked_new)
 
     # Netas >= 0: llegada anticipada <= extra → restar de extra Y de trabajadas
     mask_pos = is_normal & (horas_netas >= -eps) & (worked > eps)
     has_100 = mask_pos & (ex100 > eps)
-    has_50  = mask_pos & (~has_100) & (ex50 > eps)
+    has_50 = mask_pos & (~has_100) & (ex50 > eps)
 
-    ex100_new  = np.where(has_100, np.maximum(ex100  - llegada, 0.0), ex100_new)
-    ex50_new   = np.where(has_50,  np.maximum(ex50   - llegada, 0.0), ex50_new)
-    extra_new  = np.where(mask_pos, np.maximum(extra_t - llegada, 0.0), extra_new)
-    worked_new = np.where(mask_pos, np.maximum(worked  - llegada, 0.0), worked_new)
+    ex100_new = np.where(has_100, np.maximum(ex100 - llegada, 0.0), ex100_new)
+    ex50_new = np.where(has_50, np.maximum(ex50 - llegada, 0.0), ex50_new)
+    extra_new = np.where(mask_pos, np.maximum(extra_t - llegada, 0.0), extra_new)
+    worked_new = np.where(mask_pos, np.maximum(worked - llegada, 0.0), worked_new)
 
-    out["HORAS_FERIADO"]      = np.round(feriado_new, 2)
-    out["Horas Trabajadas"]   = np.round(worked_new,  2)
-    out["HORAS_EXTRA AL 50"]  = np.round(ex50_new,    2)
-    out["HORAS_EXTRA AL 100"] = np.round(ex100_new,   2)
-    out["HORAS_EXTRA"]        = np.round(extra_new,   2)
-    out["Horas_Netas"]        = np.round(horas_netas, 2)
+    out["HORAS_FERIADO"] = np.round(feriado_new, 2)
+    out["Horas Trabajadas"] = np.round(worked_new, 2)
+    out["HORAS_EXTRA AL 50"] = np.round(ex50_new, 2)
+    out["HORAS_EXTRA AL 100"] = np.round(ex100_new, 2)
+    out["HORAS_EXTRA"] = np.round(extra_new, 2)
+    out["Horas_Netas"] = np.round(horas_netas, 2)
 
     return out
 
-def agregar_resumen_general(path_xlsx: str):
+
+def agregar_resumen_general(path_xlsx):
     df_det = _read_detalle_diario_from_export(path_xlsx)
 
     df = df_det.copy()
@@ -671,8 +733,8 @@ def agregar_resumen_general(path_xlsx: str):
 
     res = (
         df.groupby("ID", as_index=False)
-          .agg({**{"Apellido, Nombre": "first", "Turno": "first"},
-                **{c: "sum" for c in COLS_SUM}})
+        .agg({**{"Apellido, Nombre": "first", "Turno": "first"},
+              **{c: "sum" for c in COLS_SUM}})
     )
 
     res = res[["ID", "Apellido, Nombre", "Turno"] + COLS_SUM]
@@ -681,10 +743,15 @@ def agregar_resumen_general(path_xlsx: str):
 
     res = res.sort_values(["Apellido, Nombre", "ID"], kind="mergesort").reset_index(drop=True)
 
+    if hasattr(path_xlsx, "seek"):
+        path_xlsx.seek(0)
     wb = load_workbook(path_xlsx)
     _write_df_to_sheet(wb, "Resumen General", res)
+    if hasattr(path_xlsx, "seek"):
+        path_xlsx.seek(0)
     wb.save(path_xlsx)
     wb.close()
+
 
 def aplicar_ajuste_cruce_a_feriado(df_export: pd.DataFrame) -> pd.DataFrame:
     """
@@ -694,7 +761,7 @@ def aplicar_ajuste_cruce_a_feriado(df_export: pd.DataFrame) -> pd.DataFrame:
         → HORAS_FERIADO se mueve al día siguiente. El día de inicio: HORAS_FERIADO = 0.
 
     Regla B: inicio FERIADO → fin FERIADO
-        → HORAS_FERIADO del día siguiente se acumula en el día de inicio. 
+        → HORAS_FERIADO del día siguiente se acumula en el día de inicio.
           El día siguiente: HORAS_FERIADO = 0.
           Solo aplica si el día de inicio NO fue ya destino de Regla A.
 
@@ -757,34 +824,36 @@ def aplicar_ajuste_cruce_a_feriado(df_export: pd.DataFrame) -> pd.DataFrame:
 
             cur_feriado = _safe_float(row_cur.get("HORAS_FERIADO", 0))
             nxt_feriado = _safe_float(row_nxt.get("HORAS_FERIADO", 0))
-            cur_worked  = _safe_float(row_cur.get("Horas Trabajadas", 0))
-            nxt_worked  = _safe_float(row_nxt.get("Horas Trabajadas", 0))
+            cur_worked = _safe_float(row_cur.get("Horas Trabajadas", 0))
+            nxt_worked = _safe_float(row_nxt.get("Horas Trabajadas", 0))
 
             # ── REGLA A: NO feriado → FERIADO ──
             if not cur_es_feriado and nxt_es_feriado:
-                df.at[i_nxt, "HORAS_FERIADO"] = round(cur_worked, 2)
+                cur_planif = _safe_float(row_cur.get("Horas planificadas", 0))
+                df.at[i_nxt, "HORAS_FERIADO"] = round(min(cur_worked, cur_planif) if cur_planif > 0 else cur_worked, 2)
                 df.at[i_cur, "HORAS_FERIADO"] = 0.0
-                df.at[i_cur, "HORAS_EXTRA AL 100"] = 0.0
-                df.at[i_cur, "HORAS_EXTRA AL 50"]  = 0.0
-                df.at[i_cur, "_regla_a_aplicada"]  = True  # ← flag
+                if not df.at[i_cur, "_extras_llegada_aplicada"] if "_extras_llegada_aplicada" in df.columns else True:
+                    df.at[i_cur, "HORAS_EXTRA AL 100"] = 0.0
+                    df.at[i_cur, "HORAS_EXTRA AL 50"] = 0.0
+                df.at[i_cur, "_regla_a_aplicada"] = True
                 procesados.add(i_nxt)
 
                 obs_cur = str(df.at[i_cur, "Observaciones"] or "").strip()
                 df.at[i_cur, "Observaciones"] = (
-                    obs_cur + f" | Regla A: horas feriado pasadas al {row_nxt['Fecha'].date()}"
+                        obs_cur + f" | Regla A: horas feriado pasadas al {row_nxt['Fecha'].date()}"
                 ).strip(" |")
                 obs_nxt = str(df.at[i_nxt, "Observaciones"] or "").strip()
 
 
             # ── REGLA B: FERIADO → FERIADO ──
             elif cur_es_feriado and nxt_es_feriado and i_cur not in procesados:
-                df.at[i_cur, "HORAS_FERIADO"] = round(cur_worked, 2)
-                # el día siguiente no se toca, sus horas quedan para Regla C
+                df.at[i_cur, "HORAS_FERIADO"] = round(cur_feriado + nxt_worked, 2)
+                df.at[i_nxt, "HORAS_FERIADO"] = 0.0
                 procesados.add(i_cur)
 
                 obs_nxt = str(df.at[i_nxt, "Observaciones"] or "").strip()
                 df.at[i_nxt, "Observaciones"] = (
-                        obs_nxt + f" | Regla B: horas feriado asignadas en {row_cur['Fecha'].date()}"
+                        obs_nxt + f" | Regla B: horas consolidadas en {row_cur['Fecha'].date()}"
                 ).strip(" |")
 
 
@@ -814,6 +883,7 @@ def aplicar_ajuste_cruce_a_feriado(df_export: pd.DataFrame) -> pd.DataFrame:
                         # Feriado no coincide con franco → solo Horas Trabajadas en inicio
                         # → día siguiente se limpia
                         df.at[i_cur, "Horas Trabajadas"] = cur_w
+                        df.at[i_nxt, "Horas Trabajadas"] = 0.0
                         df.at[i_nxt, "HORAS_EXTRA AL 100"] = 0.0
                         df.at[i_nxt, "HORAS_EXTRA AL 50"] = 0.0
                         df.at[i_nxt, "HORAS_FRANCO"] = 0.0
@@ -826,8 +896,6 @@ def aplicar_ajuste_cruce_a_feriado(df_export: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-
-
 def calcular_cruce_dia(real_start, real_end) -> str:
     if real_start is None or pd.isna(real_start) or real_end is None or pd.isna(real_end):
         return "No"
@@ -835,7 +903,7 @@ def calcular_cruce_dia(real_start, real_end) -> str:
         return "Si" if real_start.date() != real_end.date() else "No"
     except Exception:
         return "No"
-    
+
 
 # ================= CATEGORÍAS =================
 def split_categorized_hours_basic(categorized_hours, categorias_validas):
@@ -855,14 +923,14 @@ def split_categorized_hours_basic(categorized_hours, categorias_validas):
 def aplicar_prioridades_horas_extra(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
 
-    franco  = pd.to_numeric(out["HORAS_FRANCO"],        errors="coerce").fillna(0.0)
-    ex100   = pd.to_numeric(out["HORAS_EXTRA AL 100"],  errors="coerce").fillna(0.0)
-    feriado = pd.to_numeric(out["HORAS_FERIADO"],       errors="coerce").fillna(0.0)
-    ex50    = pd.to_numeric(out["HORAS_EXTRA AL 50"],   errors="coerce").fillna(0.0)
+    franco = pd.to_numeric(out["HORAS_FRANCO"], errors="coerce").fillna(0.0)
+    ex100 = pd.to_numeric(out["HORAS_EXTRA AL 100"], errors="coerce").fillna(0.0)
+    feriado = pd.to_numeric(out["HORAS_FERIADO"], errors="coerce").fillna(0.0)
+    ex50 = pd.to_numeric(out["HORAS_EXTRA AL 50"], errors="coerce").fillna(0.0)
 
     es_noche = out["Turno"].str.strip().str.lower() == "noche"
     es_domingo_noche = es_noche & (out["dia"].str.strip().str.upper() == "DOMINGO")
-    es_sabado_noche  = es_noche & (out["dia"].str.strip().str.upper() == "SÁBADO")
+    es_sabado_noche = es_noche & (out["dia"].str.strip().str.upper() == "SÁBADO")
 
     # Flag de Regla A
     regla_a = out["_regla_a_aplicada"].fillna(False).astype(bool) \
@@ -879,16 +947,20 @@ def aplicar_prioridades_horas_extra(df: pd.DataFrame) -> pd.DataFrame:
     eps_p = 1e-9
     franco_noche_libre = (franco > 0) & (planif < eps_p) & (es_domingo_noche | es_sabado_noche)
 
+    extras_llegada = out["_extras_llegada_aplicada"].fillna(False).astype(bool) \
+        if "_extras_llegada_aplicada" in out.columns \
+        else pd.Series(False, index=out.index)
+
     out["HORAS_EXTRA AL 100"] = np.where(
-        (feriado > 0) | regla_a,
+        ((feriado > 0) | regla_a) & (~extras_llegada),
         0.0,
         np.where(
             franco_noche_libre,
-            franco,           # franco en día libre para noche → AL100
+            franco,
             np.where(
-                es_domingo_noche | es_sabado_noche,
-                0.0,          # noche sábado/domingo con planif → 0
-                np.where(franco > 0, franco, ex100)  # resto: franco o ex100 de API
+                (es_domingo_noche | es_sabado_noche) & (~extras_llegada),
+                0.0,
+                np.where(franco > 0, franco, ex100)
             )
         )
     ).round(2)
@@ -929,7 +1001,13 @@ def corregir_horas_trabajadas(df: pd.DataFrame, tolerancia_horas: float = 1.0) -
             axis=1
         )
 
-    use_span = has_fichadas & (np.abs(worked_api - span) > tolerancia_horas)
+    tiene_cruce = out["Cruce de día"].str.strip().str.lower() == "si" \
+        if "Cruce de día" in out.columns \
+        else pd.Series(False, index=out.index)
+
+    # Para cruce de día con span razonable (≤ 24hs), igual corregimos
+    span_razonable = span <= 24.0
+    use_span = has_fichadas & (np.abs(worked_api - span) > tolerancia_horas) & (~tiene_cruce | span_razonable)
     out["Horas Trabajadas"] = np.where(use_span, span, worked_api).round(2)
     return out
 
@@ -953,19 +1031,19 @@ def inferir_extras_faltantes(df: pd.DataFrame) -> pd.DataFrame:
             return pd.Series(0.0, index=out.index)
         return pd.to_numeric(out[col], errors="coerce").fillna(0.0)
 
-    worked  = num("Horas Trabajadas")
-    planif  = num("Horas planificadas")
+    worked = num("Horas Trabajadas")
+    planif = num("Horas planificadas")
     feriado = num("HORAS_FERIADO")
-    franco  = num("HORAS_FRANCO")
-    ex50    = num("HORAS_EXTRA AL 50")
-    ex100   = num("HORAS_EXTRA AL 100")
+    franco = num("HORAS_FRANCO")
+    ex50 = num("HORAS_EXTRA AL 50")
+    ex100 = num("HORAS_EXTRA AL 100")
     extra_g = num("HORAS_EXTRA")
 
     sin_extras = (ex50 < eps) & (ex100 < eps) & (extra_g < eps) & (feriado < eps) & (franco < eps)
 
     dia_upper = out["dia"].str.strip().str.upper()
-    es_noche  = out["Turno"].str.strip().str.lower() == "noche"
-    es_domingo       = dia_upper == "DOMINGO"
+    es_noche = out["Turno"].str.strip().str.lower() == "noche"
+    es_domingo = dia_upper == "DOMINGO"
     es_lunes_viernes = dia_upper.isin(["LUNES", "MARTES", "MIÉRCOLES", "JUEVES", "VIERNES"])
 
     def _media_hora(s):
@@ -973,13 +1051,13 @@ def inferir_extras_faltantes(df: pd.DataFrame) -> pd.DataFrame:
 
     # ── Caso 1: día planificado con overtime no categorizado por la API ──
     hay_overtime = sin_extras & (planif > eps) & (worked > planif + 0.5)
-    exceso_raw   = (worked - planif).clip(lower=0.0).round(2)
+    exceso_raw = (worked - planif).clip(lower=0.0).round(2)
 
-    mask_al50_ot  = hay_overtime & es_lunes_viernes
+    mask_al50_ot = hay_overtime & es_lunes_viernes
     mask_al100_ot = hay_overtime & es_domingo & (~es_noche)
 
-    out.loc[mask_al50_ot,  "HORAS_EXTRA AL 50"]  = _media_hora(exceso_raw)[mask_al50_ot]  # AL50 redondeado
-    out.loc[mask_al100_ot, "HORAS_EXTRA AL 100"] = exceso_raw[mask_al100_ot]               # AL100 sin redondear
+    out.loc[mask_al50_ot, "HORAS_EXTRA AL 50"] = _media_hora(exceso_raw)[mask_al50_ot]  # AL50 redondeado
+    out.loc[mask_al100_ot, "HORAS_EXTRA AL 100"] = exceso_raw[mask_al100_ot]  # AL100 sin redondear
     inferido_ot = mask_al50_ot | mask_al100_ot
     out.loc[inferido_ot, "HORAS_EXTRA"] = exceso_raw[inferido_ot]
 
@@ -988,7 +1066,182 @@ def inferir_extras_faltantes(df: pd.DataFrame) -> pd.DataFrame:
     # entre semana). Se infiere franco y se limpia cualquier AL50 mal asignado por la API.
     es_franco_inferido = (planif < eps) & (worked > 0.5) & (franco < eps)
 
-    out.loc[es_franco_inferido, "HORAS_FRANCO"]      = worked.round(2)[es_franco_inferido]
+    out.loc[es_franco_inferido, "HORAS_FRANCO"] = worked.round(2)[es_franco_inferido]
     out.loc[es_franco_inferido, "HORAS_EXTRA AL 50"] = 0.0
+
+    return out
+
+
+def aplicar_extras_llegada_anticipada(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Cuando la llegada anticipada >= 50min, calcula extras como:
+    llegada_anticipada + horas_después_del_turno (si >= 30min)
+    - Lunes a viernes → AL50
+    - Domingo → AL100
+    - Sábado desde las 13hs → AL100
+    No aplica en feriado ni franco.
+    """
+    out = df.copy()
+    eps = 1e-9
+
+    def num(col):
+        if col not in out.columns:
+            return pd.Series(0.0, index=out.index)
+        return pd.to_numeric(out[col], errors="coerce").fillna(0.0)
+
+    llegada = num("LLEGADA_ANTICIPADA")
+    worked  = num("Horas Trabajadas")
+    planif  = num("Horas planificadas")
+    feriado = num("HORAS_FERIADO")
+    franco  = num("HORAS_FRANCO")
+
+    dia_upper        = out["dia"].str.strip().str.upper()
+    es_lunes_viernes = dia_upper.isin(["LUNES", "MARTES", "MIÉRCOLES", "JUEVES", "VIERNES"])
+    es_domingo       = dia_upper == "DOMINGO"
+
+    def _sabado_despues_13(row):
+        if "SÁBADO" not in str(row.get("dia", "")).upper():
+            return False
+        ho = str(row.get("Horario obligatorio", "") or "")
+        if not ho:
+            return False
+        try:
+            h = int(ho.split(":")[0])
+            return h >= 13
+        except Exception:
+            return False
+
+    es_sabado_despues_13 = out.apply(_sabado_despues_13, axis=1)
+    es_feriado_o_franco  = (feriado > eps) | (franco > eps)
+    activa = (llegada >= 0.833) & (~es_feriado_o_franco)
+
+    # Horas después del fin del turno usando _re y _se
+    horas_despues_turno = pd.Series(0.0, index=out.index)
+    if "_se" in out.columns and "_re" in out.columns:
+        mask_validos = (~pd.isna(out["_se"])) & (~pd.isna(out["_re"]))
+        if mask_validos.any():
+            horas_despues_turno[mask_validos] = out.loc[mask_validos].apply(
+                lambda r: round(max(0.0, (r["_re"] - r["_se"]).total_seconds() / 3600.0), 2),
+                axis=1
+            )
+    else:
+        horas_despues_turno = (worked - planif).clip(lower=0.0).round(2)
+
+    # Aplicar umbral de 30 minutos para horas después del turno
+    horas_despues_turno = horas_despues_turno.where(horas_despues_turno >= 0.5, 0.0)
+
+    extras_totales = (llegada + horas_despues_turno).round(2)
+
+    mask_al50  = activa & es_lunes_viernes
+    es_turno_noche = out["Turno"].str.strip().str.lower() == "noche"
+    es_domingo_noche = es_turno_noche & es_domingo
+    mask_al100 = activa & (es_domingo | es_sabado_despues_13 | es_domingo_noche)
+
+    out.loc[mask_al50,  "HORAS_EXTRA AL 50"]        = extras_totales[mask_al50]
+    out.loc[mask_al50,  "HORAS_EXTRA AL 100"]       = 0.0
+    out.loc[mask_al100, "HORAS_EXTRA AL 100"]       = extras_totales[mask_al100]
+    out.loc[mask_al100, "HORAS_EXTRA AL 50"]        = 0.0
+    out.loc[mask_al100, "_extras_llegada_aplicada"] = True
+
+    return out
+
+
+def aplicar_extras_sabado(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Regla legal: todas las horas trabajadas después de las 13:00 de un sábado
+    se categorizan como HORAS_EXTRA AL 100, siempre que sean >= 30 minutos (0.5h).
+    El resultado se cappea a Horas Trabajadas para evitar duplicados.
+    No aplica en feriado ni franco.
+    """
+    out = df.copy()
+    eps = 1e-9
+
+    def num(col):
+        if col not in out.columns:
+            return pd.Series(0.0, index=out.index)
+        return pd.to_numeric(out[col], errors="coerce").fillna(0.0)
+
+    worked  = num("Horas Trabajadas")
+    feriado = num("HORAS_FERIADO")
+    franco  = num("HORAS_FRANCO")
+
+    dia_upper = out["dia"].str.strip().str.upper()
+    es_sabado = dia_upper == "SÁBADO"
+    es_feriado_o_franco = (feriado > eps) | (franco > eps)
+
+    aplica = es_sabado & (~es_feriado_o_franco) & ("_re" in out.columns)
+
+    if not aplica.any():
+        return out
+
+    def _horas_post_13(row):
+        re = row.get("_re")
+        if re is None or pd.isna(re):
+            return 0.0
+        try:
+            las_13 = re.replace(hour=13, minute=0, second=0, microsecond=0)
+            delta = (re - las_13).total_seconds() / 3600.0
+            return round(max(0.0, delta), 2)
+        except Exception:
+            return 0.0
+
+    horas_post_13 = pd.Series(0.0, index=out.index)
+    horas_post_13[aplica] = out.loc[aplica].apply(_horas_post_13, axis=1)
+
+    # Umbral: solo si >= 30 minutos después de las 13
+    horas_post_13 = horas_post_13.where(horas_post_13 >= 0.5, 0.0)
+
+    # Cap: no puede superar las horas trabajadas
+    horas_post_13 = horas_post_13.clip(upper=worked)
+
+    mask = aplica & (horas_post_13 > 0)
+    out.loc[mask, "HORAS_EXTRA AL 100"] = horas_post_13[mask].round(2)
+
+    return out
+
+
+def aplicar_extras_domingo(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Regla legal: todas las horas trabajadas el domingo son HORAS_EXTRA AL 100.
+    Excepciones:
+    - Turno Noche
+    - Horario obligatorio 22:00 - 06:00
+    - Feriado o franco
+    El resultado se cappea a Horas Trabajadas.
+    """
+    out = df.copy()
+    eps = 1e-9
+
+    def num(col):
+        if col not in out.columns:
+            return pd.Series(0.0, index=out.index)
+        return pd.to_numeric(out[col], errors="coerce").fillna(0.0)
+
+    worked  = num("Horas Trabajadas")
+    feriado = num("HORAS_FERIADO")
+    franco  = num("HORAS_FRANCO")
+
+    dia_upper = out["dia"].str.strip().str.upper()
+    es_domingo = dia_upper == "DOMINGO"
+
+    es_turno_noche = out["Turno"].str.strip().str.lower() == "noche"
+
+    def _es_horario_noche(row):
+        ho = str(row.get("Horario obligatorio", "") or "")
+        return ho.strip().startswith("22:")
+
+    es_horario_noche = out.apply(_es_horario_noche, axis=1)
+    es_feriado_o_franco = (feriado > eps) | (franco > eps)
+
+    aplica = (
+        es_domingo &
+        (~es_turno_noche) &
+        (~es_horario_noche) &
+        (~es_feriado_o_franco) &
+        (worked > 0)
+    )
+
+    out.loc[aplica, "HORAS_EXTRA AL 100"] = worked[aplica].round(2)
+    out.loc[aplica, "HORAS_EXTRA AL 50"]  = 0.0
 
     return out
