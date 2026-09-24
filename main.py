@@ -414,6 +414,12 @@ def run_report(start_date: str, end_date: str) -> bytes:
     now = datetime.now()
     generated_at = now.strftime("%Y-%m-%d %H:%M")
 
+    # Redondear hacia abajo al entero en columnas de horas categorías
+    COLS_FLOOR = ["HORAS_FRANCO", "HORAS_FERIADO", "HORAS_EXTRA AL 50", "HORAS_EXTRA AL 100"]
+    for c in COLS_FLOOR:
+        if c in df_export.columns:
+            df_export[c] = df_export[c].apply(lambda x: math.floor(x) if pd.notna(x) and x != 0 else x)
+
     COLS_CERO_VACIO = [
         "HORAS_FRANCO",
         "HORAS_FERIADO",
