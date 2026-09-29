@@ -414,11 +414,23 @@ def run_report(start_date: str, end_date: str) -> bytes:
     now = datetime.now()
     generated_at = now.strftime("%Y-%m-%d %H:%M")
 
+    def _redondear_media_hora_arriba(x):
+        if pd.isna(x) or x == 0:
+            return x
+        entero = math.floor(x)
+        minutos = round((x - entero) * 60)
+        if minutos < 25:
+            return float(entero)
+        elif minutos < 50:
+            return entero + 0.5
+        else:
+            return entero + 1.0
+    
     # Redondear hacia abajo al entero en columnas de horas categorías
     COLS_FLOOR = ["HORAS_FRANCO", "HORAS_FERIADO", "HORAS_EXTRA AL 50", "HORAS_EXTRA AL 100"]
     for c in COLS_FLOOR:
         if c in df_export.columns:
-            df_export[c] = df_export[c].apply(lambda x: math.floor(x) if pd.notna(x) and x != 0 else x)
+            df_export[c] = df_export[c].apply(_redondear_media_hora_arriba)
 
     COLS_CERO_VACIO = [
         "HORAS_FRANCO",
