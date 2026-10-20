@@ -420,8 +420,8 @@ def pintar_flags_si_no(
             "Trabajo Insuficiente",
             "Es Feriado",
             "Licencia",
-            " de día",
-            "Ajuste →feriado",
+            "Cruce de día",
+            "Ajuste cruce→feriado",
         ]
 
     wb = load_workbook(path_xlsx)
@@ -797,7 +797,7 @@ def aplicar_ajuste__a_feriado(df_export: pd.DataFrame) -> pd.DataFrame:
         obs = str(row.get("Observaciones") or "").lower()
         return "feriado" in obs or _safe_float(row.get("HORAS_FERIADO", 0)) > 0
 
-        def _cruce_de_dia(row) -> bool:
+    def _cruce_de_dia(row) -> bool:
         return str(row.get("Cruce de día") or "").strip().lower() == "si"
 
     if "HORAS_FERIADO" not in df.columns:
