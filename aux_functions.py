@@ -420,8 +420,8 @@ def pintar_flags_si_no(
             "Trabajo Insuficiente",
             "Es Feriado",
             "Licencia",
-            "Cruce de día",
-            "Ajuste cruce→feriado",
+            " de día",
+            "Ajuste →feriado",
         ]
 
     wb = load_workbook(path_xlsx)
@@ -753,7 +753,7 @@ def agregar_resumen_general(path_xlsx):
     wb.close()
 
 
-def aplicar_ajuste_cruce_a_feriado(df_export: pd.DataFrame) -> pd.DataFrame:
+def aplicar_ajuste__a_feriado(df_export: pd.DataFrame) -> pd.DataFrame:
     """
     Corrige HORAS_FERIADO para turnos nocturnos que cruzan días, según estas reglas:
 
@@ -797,7 +797,7 @@ def aplicar_ajuste_cruce_a_feriado(df_export: pd.DataFrame) -> pd.DataFrame:
         obs = str(row.get("Observaciones") or "").lower()
         return "feriado" in obs or _safe_float(row.get("HORAS_FERIADO", 0)) > 0
 
-    def _cruce_de_dia(row) -> bool:
+        def _cruce_de_dia(row) -> bool:
         return str(row.get("Cruce de día") or "").strip().lower() == "si"
 
     if "HORAS_FERIADO" not in df.columns:
@@ -829,12 +829,10 @@ def aplicar_ajuste_cruce_a_feriado(df_export: pd.DataFrame) -> pd.DataFrame:
 
             # ── REGLA A: NO feriado → FERIADO ──
             if not cur_es_feriado and nxt_es_feriado:
-                cur_planif = _safe_float(row_cur.get("Horas planificadas", 0))
-                df.at[i_nxt, "HORAS_FERIADO"] = round(min(cur_worked, cur_planif) if cur_planif > 0 else cur_worked, 2)
+                df.at[i_nxt, "HORAS_FERIADO"] = round(cur_worked, 2)
                 df.at[i_cur, "HORAS_FERIADO"] = 0.0
-                if not df.at[i_cur, "_extras_llegada_aplicada"] if "_extras_llegada_aplicada" in df.columns else True:
-                    df.at[i_cur, "HORAS_EXTRA AL 100"] = 0.0
-                    df.at[i_cur, "HORAS_EXTRA AL 50"] = 0.0
+                df.at[i_cur, "HORAS_EXTRA AL 100"] = 0.0
+                df.at[i_cur, "HORAS_EXTRA AL 50"] = 0.0
                 df.at[i_cur, "_regla_a_aplicada"] = True
                 procesados.add(i_nxt)
 
