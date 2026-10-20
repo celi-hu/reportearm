@@ -753,7 +753,7 @@ def agregar_resumen_general(path_xlsx):
     wb.close()
 
 
-def aplicar_ajuste__a_feriado(df_export: pd.DataFrame) -> pd.DataFrame:
+def aplicar_ajuste_cruce_a_feriado(df_export: pd.DataFrame) -> pd.DataFrame:
     """
     Corrige HORAS_FERIADO para turnos nocturnos que cruzan días, según estas reglas:
 
