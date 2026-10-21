@@ -1111,7 +1111,7 @@ def aplicar_extras_llegada_anticipada(df: pd.DataFrame) -> pd.DataFrame:
 
     es_sabado_despues_13 = out.apply(_sabado_despues_13, axis=1)
     es_feriado_o_franco  = (feriado > eps) | (franco > eps)
-    activa = (llegada >= 0.833) & (~es_feriado_o_franco)
+    activa = (llegada >= 0.833) & (~es_feriado_o_franco) & (worked > planif)
 
     # Horas después del fin del turno usando _re y _se
     horas_despues_turno = pd.Series(0.0, index=out.index)
