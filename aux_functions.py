@@ -1183,7 +1183,8 @@ def aplicar_extras_llegada_anticipada(df: pd.DataFrame) -> pd.DataFrame:
     # Aplicar umbral de 30 minutos para horas después del turno
     horas_despues_turno = horas_despues_turno.where(horas_despues_turno >= 0.5, 0.0)
 
-    extras_totales = (llegada + horas_despues_turno).round(2)
+    exceso_sobre_planif = (worked - planif).clip(lower=0.0)
+    extras_totales = (llegada + horas_despues_turno).clip(upper=exceso_sobre_planif).round(2)
 
     mask_al50  = activa & es_lunes_viernes
     es_turno_noche = out["Turno"].str.strip().str.lower() == "noche"
