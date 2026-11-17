@@ -16,8 +16,9 @@ from aux_functions import *
 # ================= CONFIG =================
 BASE = "https://api-prod.humand.co/public/api/v1"
 
-START_DATE = "2026-07-22"
-END_DATE   = "2026-08-20"
+
+START_DATE = "2026-10-13"
+END_DATE   = "2026-11-12"
 
 
 LIMIT_USERS = 50
@@ -113,6 +114,7 @@ def fetch_users():
         users += get(f"{BASE}/users", {"page": p, "limit": LIMIT_USERS})["users"]
 
     user_map, turno_map, employee_ids = {}, {}, []
+    super_ids = set()  # colaboradores de la segmentación "Super y coordis"
 
     for u in users:
         if u.get("status") != "ACTIVE":
@@ -132,11 +134,16 @@ def fetch_users():
                 break
         turno_map[emp] = turno
 
-    return employee_ids, user_map, turno_map
+        for seg in (u.get("segmentations") or []):
+            if (seg.get("group") or "").strip().lower() == "super y coordis":
+                super_ids.add(emp)
+                break
+
+    return employee_ids, user_map, turno_map, super_ids
 
 
 # ================= DAY SUMMARIES =================
-def fetch_batch(emp_ids, user_map, turno_map):
+def fetch_batch(emp_ids, user_map, turno_map, super_ids):
     rows = []
     page = 1
 
@@ -255,7 +262,8 @@ def fetch_batch(emp_ids, user_map, turno_map):
                 "OBSERVACIONES": build_observaciones(it),
                 "PLANIFICADAS": scheduled,
                 "_worked_api": worked_api,
-                "_isWorkday_api": it.get("isWorkday")
+                "_isWorkday_api": it.get("isWorkday"),
+                "_es_super_coordi": emp in super_ids,
             }
 
             row.update(cat_hours)
@@ -267,11 +275,11 @@ def fetch_batch(emp_ids, user_map, turno_map):
 
     return rows
 
-def build_df(employee_ids, user_map, turno_map):
+def build_df(employee_ids, user_map, turno_map, super_ids):
     rows = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
         futures = [
-            ex.submit(fetch_batch, employee_ids[i:i + BATCH_SIZE], user_map, turno_map)
+            ex.submit(fetch_batch, employee_ids[i:i + BATCH_SIZE], user_map, turno_map, super_ids)
             for i in range(0, len(employee_ids), BATCH_SIZE)
         ]
         for f in as_completed(futures):
@@ -299,10 +307,10 @@ def run_report(start_date: str, end_date: str) -> bytes:
     global START_DATE, END_DATE
     START_DATE, END_DATE = start_date, end_date
 
-    employee_ids, user_map, turno_map = fetch_users()
+    employee_ids, user_map, turno_map, super_ids = fetch_users()
     print(f"Usuarios ACTIVE: {len(employee_ids)}")
 
-    df = build_df(employee_ids, user_map, turno_map)
+    df = build_df(employee_ids, user_map, turno_map, super_ids)
     df = df.sort_values(by=["ID", "FECHA"], ascending=[True, True]).reset_index(drop=True)
 
     df_export = df.copy()
@@ -330,20 +338,18 @@ def run_report(start_date: str, end_date: str) -> bytes:
         "HORAS_TRABAJADAS": "Horas Trabajadas",
     }
 
+
     df_export = df_export.rename(columns=rename_excel)
 
     # Fix 1/4: corrige Horas Trabajadas cuando la API sobre/sub-reporta vs fichadas reales
     df_export = corregir_horas_trabajadas(df_export)
 
-
     # Fix 3/5: infiere extras faltantes cuando la API no los categorizó
     df_export = inferir_extras_faltantes(df_export)
 
 
-
     # Limpia extras que no cumplen umbral mínimo (50min llegada / 30min salida)
     df_export = limpiar_extras_por_umbral(df_export)
-
 
 
     # ahora sí, dropeo internos
@@ -357,29 +363,25 @@ def run_report(start_date: str, end_date: str) -> bytes:
 
     # Aplica extras por llegada anticipada >= 50min
     df_export = aplicar_extras_llegada_anticipada(df_export)
-    debug = df_export[df_export["ID"] == "94228271"]
-    print("=== QUEZADA DESPUES EXTRAS LLEGADA ===")
-    print(debug[["Fecha", "Horas Trabajadas", "HORAS_EXTRA AL 100", "_extras_llegada_aplicada"]].to_string())
+
+
 
     # Aplica extras AL100 para horas después de las 13hs del sábado
     df_export = aplicar_extras_sabado(df_export)
 
+
     # Aplica extras AL100 para horas trabajadas el domingo (excluye turno noche y horario 22-06)
     df_export = aplicar_extras_domingo(df_export)
-    debug = df_export[df_export["ID"] == "94228271"]
-    print("=== QUEZADA DESPUES EXTRAS DOMINGO ===")
-    print(debug[["Fecha", "Horas Trabajadas", "HORAS_EXTRA AL 100", "_extras_llegada_aplicada"]].to_string())
+
 
     # ✅ aplicar ajuste ANTES de dropear _rs/_re (los necesitamos para _worked)
     df_export = aplicar_ajuste_cruce_a_feriado(df_export)
-    debug = df_export[df_export["ID"] == "94228271"]
-    print("=== QUEZADA DESPUES CRUCE FERIADO ===")
-    print(debug[["Fecha", "Horas Trabajadas", "HORAS_EXTRA AL 100", "_extras_llegada_aplicada"]].to_string())
+
+    #df_export = limpiar_extra_100_turno_noche(df_export)
+    #df_export = forzar_extras_a_cero_si_feriado_o_franco(df_export)
 
     df_export = aplicar_prioridades_horas_extra(df_export)
-    debug = df_export[df_export["ID"] == "94228271"]
-    print("=== QUEZADA DESPUES PRIORIDADES ===")
-    print(debug[["Fecha", "Horas Trabajadas", "HORAS_EXTRA AL 100", "_extras_llegada_aplicada"]].to_string())
+    df_export = anular_extras_super_coordis(df_export)
 
 
     df_export = df_export.drop(columns=["_ss","_se","_rs","_re","_worked","_worked_api","_isWorkday_api","_regla_a_aplicada","_extras_llegada_aplicada"],errors="ignore")
@@ -390,9 +392,17 @@ def run_report(start_date: str, end_date: str) -> bytes:
         "Fecha",
         "dia",
         "Turno",
+        #"Ausencia",
+        #"Tardanza -",
         "TARDANZA",
+        # "Trabajo Insuficiente",
+        # "Es Feriado",
+        # "Licencia",
+        #"Cruce de día",
+        # "Ajuste cruce→feriado",
         "Observaciones",
         "Horas_Netas",
+        #"HORAS_EXTRA",
         "LLEGADA_ANTICIPADA",
 
         "Horario obligatorio",
@@ -401,8 +411,11 @@ def run_report(start_date: str, end_date: str) -> bytes:
         "Horas Trabajadas",
         "HORAS_FRANCO",
         "HORAS_FERIADO",
+        #"HORAS_FERIADO NOCTURNA",
+        # "HORAS_FRANCO NOCTURNA",
 
-        "HORAS_EXTRA AL 50","HORAS_EXTRA AL 100"
+        #"HORAS_REGULAR",
+    "HORAS_EXTRA AL 50","HORAS_EXTRA AL 100"#"HORAS_NOCTURNA",
     ]
 
     for c in cols_final:
@@ -414,6 +427,7 @@ def run_report(start_date: str, end_date: str) -> bytes:
     now = datetime.now()
     generated_at = now.strftime("%Y-%m-%d %H:%M")
 
+    # Redondear a escalones de 0.5h hacia arriba en columnas de horas categorías
     def _redondear_media_hora_arriba(x):
         if pd.isna(x) or x == 0:
             return x
@@ -425,12 +439,12 @@ def run_report(start_date: str, end_date: str) -> bytes:
             return entero + 0.5
         else:
             return entero + 1.0
-    
-    # Redondear hacia abajo al entero en columnas de horas categorías
+
     COLS_FLOOR = ["HORAS_FRANCO", "HORAS_FERIADO", "HORAS_EXTRA AL 50", "HORAS_EXTRA AL 100"]
     for c in COLS_FLOOR:
         if c in df_export.columns:
             df_export[c] = df_export[c].apply(_redondear_media_hora_arriba)
+
 
     COLS_CERO_VACIO = [
         "HORAS_FRANCO",
