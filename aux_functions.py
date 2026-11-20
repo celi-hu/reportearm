@@ -1176,7 +1176,7 @@ def aplicar_extras_sabado(df: pd.DataFrame) -> pd.DataFrame:
     es_sabado = dia_upper == "SÁBADO"
     es_feriado_o_franco = (feriado > eps) | (franco > eps)
 
-    aplica = es_sabado & (~es_feriado_o_franco) & ("_re" in out.columns) & (worked > planif)
+    aplica = es_sabado & (~es_feriado_o_franco) & ("_re" in out.columns) & (worked > eps)
 
     if not aplica.any():
         return out
